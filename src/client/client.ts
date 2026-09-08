@@ -1,5 +1,6 @@
 import type { SplitBillConfig } from "../config.js";
-import { ApiError, AuthError } from "./errors.js";
+import type { BillDto, PopulatedUser } from "../types.js";
+import { ApiError, AuthError, ResolveError } from "./errors.js";
 
 const isRecord = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null;
@@ -32,12 +33,30 @@ export class SplitBillClient {
     }
   }
 
+  private getSetCookies(res: Response): string[] {
+    const headers = res.headers as Headers & { getSetCookie?: () => string[] };
+    if (typeof headers.getSetCookie === "function") {
+      const arr = headers.getSetCookie();
+      if (arr.length > 0) return arr;
+    }
+    const single = res.headers.get("set-cookie") ?? "";
+    if (!single) return [];
+    return single.split(/,(?=[^;,]+=[^;,]+)/);
+  }
+
+  private toCookieHeader(cookies: string[]): string {
+    return cookies
+      .map((c) => c.split(";")[0].trim())
+      .filter((c) => c.length > 0)
+      .join("; ");
+  }
+
   async login(): Promise<void> {
     const csrfRes = await this.raw("/api/auth/csrf", { method: "GET" });
     if (!csrfRes.ok) throw new AuthError(`CSRF request failed: HTTP ${csrfRes.status}`);
     const csrfJson = (await csrfRes.json()) as { csrfToken?: string };
     if (!csrfJson.csrfToken) throw new AuthError("CSRF response had no csrfToken");
-    const csrfCookie = csrfRes.headers.get("set-cookie") ?? "";
+    const csrfCookie = this.toCookieHeader(this.getSetCookies(csrfRes));
     const body = new URLSearchParams({
       csrfToken: csrfJson.csrfToken,
       email: this.cfg.SPLITBILL_EMAIL,
@@ -45,7 +64,7 @@ export class SplitBillClient {
       callbackUrl: `${this.cfg.SPLITBILL_BASE_URL}/dashboard`,
       json: "true",
     });
-    const res = await fetch(`${this.cfg.SPLITBILL_BASE_URL}/api/auth/callback/credentials`, {
+    const res = await this.raw("/api/auth/callback/credentials", {
       method: "POST",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
@@ -54,16 +73,13 @@ export class SplitBillClient {
       body,
     });
     const payload = (await res.json().catch(() => ({}))) as { error?: string };
-    const setCookie = res.headers.get("set-cookie") ?? "";
-    const session = setCookie
-      .split(/,(?=[^;,]+=[^;,]+)/)
-      .map((c) => c.split(";")[0].trim())
-      .filter(
+    const session = this.toCookieHeader(
+      this.getSetCookies(res).filter(
         (c) =>
           c.startsWith("next-auth.session-token=") ||
           c.startsWith("__Secure-next-auth.session-token="),
-      )
-      .join("; ");
+      ),
+    );
     if (!res.ok || payload.error || !session) {
       throw new AuthError(
         `Login failed for ${this.cfg.SPLITBILL_EMAIL}: HTTP ${res.status}${payload.error ? ` (${payload.error})` : ""}`,
@@ -86,6 +102,104 @@ export class SplitBillClient {
       throw new ApiError(res.status, text.slice(0, 500));
     }
     return (await res.json()) as T;
+  }
+
+  async getMeId(): Promise<string> {
+    if (!this.cachedMeId) {
+      const me = await this.request<{ user: { _id: string } }>("/api/user/me");
+      this.cachedMeId = me.user._id;
+    }
+    return this.cachedMeId as string;
+  }
+
+  async getBills(): Promise<BillDto[]> {
+    const res = await this.request<{ bills: BillDto[] }>("/api/bills");
+    return res.bills;
+  }
+
+  async getBill(billId: string): Promise<BillDto> {
+    const res = await this.request<{ bill: BillDto } | { error: string }>(
+      `/api/bills/${encodeURIComponent(billId)}`,
+    );
+    if (!this.isRecordHelper(res) || !("bill" in res)) {
+      throw new ApiError(404, "Bill not found");
+    }
+    return (res as { bill: BillDto }).bill;
+  }
+
+  async createBill(body: {
+    participants: { user: string; items: { name: string; price: number; priceWithVat?: number; vat?: boolean }[]; totalSum: number }[];
+    payerId: string;
+    title?: string;
+    description?: string;
+  }): Promise<BillDto> {
+    const res = await this.request<{ bill: BillDto }>("/api/bills", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    return res.bill;
+  }
+
+  async updatePayment(billId: string, participantId: string, status: string): Promise<BillDto> {
+    const res = await this.request<{ bill: BillDto }>(
+      `/api/bills/${encodeURIComponent(billId)}`,
+      { method: "PATCH", body: JSON.stringify({ participantId, status }) },
+    );
+    return res.bill;
+  }
+
+  async searchUsers(query: string): Promise<PopulatedUser[]> {
+    const res = await this.request<{ users: PopulatedUser[] }>(
+      `/api/users/search?q=${encodeURIComponent(query)}`,
+    );
+    return res.users;
+  }
+
+  async listFriends(): Promise<{ friends: PopulatedUser[]; requests?: unknown }> {
+    return this.request<{ friends: PopulatedUser[] }>("/api/friends");
+  }
+
+  async getStats(): Promise<{
+    totalBills: number;
+    totalOwed: number;
+    totalOwing: number;
+    pendingBills: number;
+    completedBills: number;
+  }> {
+    const res = await this.request<{
+      stats: {
+        totalBills: number;
+        totalOwed: number;
+        totalOwing: number;
+        pendingBills: number;
+        completedBills: number;
+      };
+    }>("/api/dashboard/stats");
+    return res.stats;
+  }
+
+  async resolveUserId(ref: string): Promise<string> {
+    if (/^[0-9a-fA-F]{24}$/.test(ref)) return ref;
+    const cached = this.emailCache.get(ref.toLowerCase());
+    if (cached) return cached;
+    const found = await this.searchUsers(ref);
+    const exact = found.find((u) => u.email.toLowerCase() === ref.toLowerCase());
+    if (exact) {
+      this.emailCache.set(ref.toLowerCase(), exact._id);
+      return exact._id;
+    }
+    const { friends } = await this.listFriends();
+    const friend = friends.find((u) => u.email.toLowerCase() === ref.toLowerCase());
+    if (friend) {
+      this.emailCache.set(ref.toLowerCase(), friend._id);
+      return friend._id;
+    }
+    throw new ResolveError(
+      `User '${ref}' not found. Clarify the email or add them as a friend.`,
+      [...found, ...friends]
+        .slice(0, 5)
+        .map((u) => ({ name: u.name, email: u.email })),
+    );
   }
 
   protected invalidateMe(): void {
