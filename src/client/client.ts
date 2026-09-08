@@ -23,11 +23,18 @@ export class SplitBillClient {
       if (init.body !== undefined && !headers["Content-Type"]) {
         headers["Content-Type"] = "application/json";
       }
-      return await fetch(`${this.cfg.SPLITBILL_BASE_URL}${path}`, {
-        ...init,
-        headers,
-        signal: ctrl.signal,
-      });
+      try {
+        return await fetch(`${this.cfg.SPLITBILL_BASE_URL}${path}`, {
+          ...init,
+          headers,
+          signal: ctrl.signal,
+        });
+      } catch (e) {
+        if ((e as { name?: unknown })?.name === "AbortError") {
+          throw new ApiError(504, `Request to ${path} timed out after ${this.cfg.SPLITBILL_TIMEOUT_MS}ms`);
+        }
+        throw e;
+      }
     } finally {
       clearTimeout(timer);
     }
