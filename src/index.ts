@@ -8,7 +8,7 @@ import {
 import { ZodError } from "zod";
 import { loadConfig } from "./config.js";
 import { SplitBillClient } from "./client/client.js";
-import { ApiError, AuthError, ResolveError } from "./client/errors.js";
+import { ApiError, AuthError, ResolveError, ValidationError } from "./client/errors.js";
 import { buildTools } from "./tools/index.js";
 
 function fail(message: string): never {
@@ -33,6 +33,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
 server.setRequestHandler(CallToolRequestSchema, async (req) => {
   const tool = tools.find((t) => t.name === req.params.name);
   if (!tool) {
+    console.error(`unknown tool '${req.params.name}'`);
     return { content: [{ type: "text", text: `Unknown tool '${req.params.name}'` }], isError: true };
   }
   try {
@@ -47,7 +48,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
       };
     }
     const code =
-      e instanceof AuthError || e instanceof ResolveError || e instanceof ApiError
+      e instanceof AuthError || e instanceof ResolveError || e instanceof ApiError || e instanceof ValidationError
         ? e.code
         : "BILL_API_ERROR";
     const extra =

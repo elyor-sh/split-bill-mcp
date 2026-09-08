@@ -4,7 +4,7 @@ import { toUnits } from "../logic/split.js";
 export const summaryLang = (lang?: string): "ru" | "en" =>
   (lang ?? "en").toLowerCase().startsWith("ru") ? "ru" : "en";
 
-const money = (n: number): string => toUnits(Math.round(n * 100)).toFixed(2);
+const money = (n: number): string => toUnits(n * 100).toFixed(2);
 
 export function billCreatedSummary(bill: BillDto, lang?: string): string {
   const per = bill.participants

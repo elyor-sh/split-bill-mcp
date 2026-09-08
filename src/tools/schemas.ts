@@ -18,6 +18,8 @@ const readyParticipantSchema = z.object({
 const receiptItemSchema = billItemSchema.extend({
   consumers: z.array(z.string().min(1)).min(1),
   portions: z.array(z.number().positive()).optional(),
+}).refine((it) => !it.portions || it.portions.length === it.consumers.length, {
+  message: "portions length must match consumers length",
 });
 
 export const createBillInputSchema = z.discriminatedUnion("mode", [
@@ -67,7 +69,7 @@ export const updatePaymentInputSchema = z.object({
 });
 
 export const searchUsersInputSchema = z.object({
-  query: z.string().min(1).max(100),
+  query: z.string().min(2).max(100),
   lang: langSchema,
 });
 

@@ -1,5 +1,5 @@
 import type { SplitBillClient } from "../client/client.js";
-import { ApiError } from "../client/errors.js";
+import { ApiError, ValidationError } from "../client/errors.js";
 import { filterBills, groupByStatus, paginate } from "../logic/filters.js";
 import { splitReceiptItems, verifyReadySplit } from "../logic/split.js";
 import type { BillDto } from "../types.js";
@@ -40,6 +40,9 @@ const obj = (properties: Record<string, unknown>, required: string[] = []) => ({
 });
 const opt = (s: Record<string, unknown>) => ({ ...s });
 
+const withVatDefaults = (items: { name: string; price: number; priceWithVat?: number; vat?: boolean }[]) =>
+  items.map((it) => ({ ...it, priceWithVat: it.priceWithVat ?? it.price, vat: it.vat ?? false }));
+
 export function buildTools(client: SplitBillClient): ToolDef[] {
   const compact = (b: BillDto) => ({
     id: b._id,
@@ -61,6 +64,7 @@ export function buildTools(client: SplitBillClient): ToolDef[] {
       description:
         "Create a SplitBill bill. mode=ready_split takes pre-split participants with totals; mode=raw_receipt takes receipt positions with consumers and splits them.",
       inputSchema: {
+        type: "object",
         oneOf: [
           obj(
             {
@@ -112,7 +116,7 @@ export function buildTools(client: SplitBillClient): ToolDef[] {
           const participants = await Promise.all(
             computed.map(async (p) => ({
               user: await client.resolveUserId(p.user),
-              items: p.items,
+              items: withVatDefaults(p.items),
               totalSum: p.totalSum,
             })),
           );
@@ -126,13 +130,13 @@ export function buildTools(client: SplitBillClient): ToolDef[] {
         }
         const check = verifyReadySplit(input.participants);
         if (!check.ok) {
-          return { code: "VALIDATION_ERROR", message: check.message, lang: lang ?? "en" };
+          throw new ValidationError(check.message);
         }
         const payerId = await client.resolveUserId(input.payerId);
         const participants = await Promise.all(
           input.participants.map(async (p) => ({
             user: await client.resolveUserId(p.user),
-            items: p.items,
+            items: withVatDefaults(p.items),
             totalSum: p.totalSum,
           })),
         );
@@ -212,13 +216,14 @@ export function buildTools(client: SplitBillClient): ToolDef[] {
         const bill = await client.getBill(input.billId);
         const ref = input.participant.toLowerCase();
         const match = bill.participants.find(
-          (p) => p.user._id === input.participant || p.user.email.toLowerCase() === ref,
+          (p) => p.user._id.toLowerCase() === input.participant.toLowerCase() || p.user.email.toLowerCase() === ref,
         );
         if (!match) throw new ApiError(404, `Participant '${input.participant}' not on bill '${bill.title}'`);
         const updated = await client.updatePayment(bill._id, match.user._id, input.status);
+        const full = await client.getBill(updated._id);
         return {
-          data: compact(updated),
-          summary: paymentUpdatedSummary(updated.title, match.user.name, input.status, input.lang),
+          data: compact(full),
+          summary: paymentUpdatedSummary(full.title, match.user.name, input.status, input.lang),
           lang: input.lang ?? "en",
         };
       },
@@ -226,7 +231,7 @@ export function buildTools(client: SplitBillClient): ToolDef[] {
     {
       name: "search_users",
       description: "Search SplitBill users by name or email (to resolve participant IDs).",
-      inputSchema: obj({ query: str({ minLength: 1, maxLength: 100 }), lang: opt(str()) }, ["query"]),
+      inputSchema: obj({ query: str({ minLength: 2, maxLength: 100 }), lang: opt(str()) }, ["query"]),
       handler: async (args) => {
         const input = searchUsersInputSchema.parse(args);
         const users = await client.searchUsers(input.query);
