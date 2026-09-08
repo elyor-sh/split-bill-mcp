@@ -194,6 +194,11 @@ export class SplitBillClient {
 
   async resolveUserId(ref: string): Promise<string> {
     if (/^[0-9a-fA-F]{24}$/.test(ref)) return ref;
+    // Upstream user search excludes the caller, so the service user's own
+    // email is never searchable — resolve it directly via /api/user/me.
+    if (ref.toLowerCase() === this.cfg.SPLITBILL_EMAIL.toLowerCase()) {
+      return this.getMeId();
+    }
     const cached = this.emailCache.get(ref.toLowerCase());
     if (cached) return cached;
     const found = await this.searchUsers(ref);
