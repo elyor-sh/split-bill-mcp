@@ -1,5 +1,5 @@
 import type { SplitBillConfig } from "../config.js";
-import type { BillDto, PopulatedUser } from "../types.js";
+import type { BillDto, ParticipantStatus, PopulatedUser } from "../types.js";
 import { ApiError, AuthError, ResolveError } from "./errors.js";
 
 const isRecord = (v: unknown): v is Record<string, unknown> =>
@@ -105,11 +105,14 @@ export class SplitBillClient {
   }
 
   async getMeId(): Promise<string> {
-    if (!this.cachedMeId) {
-      const me = await this.request<{ user: { _id: string } }>("/api/user/me");
-      this.cachedMeId = me.user._id;
+    if (this.cachedMeId) return this.cachedMeId;
+    const me = await this.request<{ user?: { _id?: unknown } }>("/api/user/me");
+    const id = me?.user?._id;
+    if (typeof id !== "string" || id.length === 0) {
+      throw new ApiError(500, "Unexpected /api/user/me response shape");
     }
-    return this.cachedMeId as string;
+    this.cachedMeId = id;
+    return id;
   }
 
   async getBills(): Promise<BillDto[]> {
@@ -118,13 +121,17 @@ export class SplitBillClient {
   }
 
   async getBill(billId: string): Promise<BillDto> {
-    const res = await this.request<{ bill: BillDto } | { error: string }>(
-      `/api/bills/${encodeURIComponent(billId)}`,
-    );
-    if (!this.isRecordHelper(res) || !("bill" in res)) {
-      throw new ApiError(404, "Bill not found");
+    try {
+      const res = await this.request<{ bill: BillDto }>(
+        `/api/bills/${encodeURIComponent(billId)}`,
+      );
+      return res.bill;
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 404) {
+        throw new ApiError(404, "Bill not found");
+      }
+      throw err;
     }
-    return (res as { bill: BillDto }).bill;
   }
 
   async createBill(body: {
@@ -140,7 +147,7 @@ export class SplitBillClient {
     return res.bill;
   }
 
-  async updatePayment(billId: string, participantId: string, status: string): Promise<BillDto> {
+  async updatePayment(billId: string, participantId: string, status: ParticipantStatus): Promise<BillDto> {
     const res = await this.request<{ bill: BillDto }>(
       `/api/bills/${encodeURIComponent(billId)}`,
       { method: "PATCH", body: JSON.stringify({ participantId, status }) },
@@ -155,8 +162,8 @@ export class SplitBillClient {
     return res.users;
   }
 
-  async listFriends(): Promise<{ friends: PopulatedUser[]; requests?: unknown }> {
-    return this.request<{ friends: PopulatedUser[] }>("/api/friends");
+  async listFriends(): Promise<{ friends: PopulatedUser[]; sentRequests?: unknown; receivedRequests?: unknown }> {
+    return this.request<{ friends: PopulatedUser[]; sentRequests?: unknown; receivedRequests?: unknown }>("/api/friends");
   }
 
   async getStats(): Promise<{
