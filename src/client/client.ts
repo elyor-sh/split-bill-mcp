@@ -194,23 +194,26 @@ export class SplitBillClient {
 
   async resolveUserId(ref: string): Promise<string> {
     if (/^[0-9a-fA-F]{24}$/.test(ref)) return ref;
+    const norm = ref.trim().toLowerCase();
     // Upstream user search excludes the caller, so the service user's own
     // email is never searchable — resolve it directly via /api/user/me.
-    if (ref.toLowerCase() === this.cfg.SPLITBILL_EMAIL.toLowerCase()) {
-      return this.getMeId();
+    if (norm === this.cfg.SPLITBILL_EMAIL.toLowerCase()) {
+      const id = await this.getMeId();
+      this.emailCache.set(norm, id);
+      return id;
     }
-    const cached = this.emailCache.get(ref.toLowerCase());
+    const cached = this.emailCache.get(norm);
     if (cached) return cached;
     const found = await this.searchUsers(ref);
-    const exact = found.find((u) => u.email.toLowerCase() === ref.toLowerCase());
+    const exact = found.find((u) => u.email.toLowerCase() === norm);
     if (exact) {
-      this.emailCache.set(ref.toLowerCase(), exact._id);
+      this.emailCache.set(norm, exact._id);
       return exact._id;
     }
     const { friends } = await this.listFriends();
-    const friend = friends.find((u) => u.email.toLowerCase() === ref.toLowerCase());
+    const friend = friends.find((u) => u.email.toLowerCase() === norm);
     if (friend) {
-      this.emailCache.set(ref.toLowerCase(), friend._id);
+      this.emailCache.set(norm, friend._id);
       return friend._id;
     }
     throw new ResolveError(
