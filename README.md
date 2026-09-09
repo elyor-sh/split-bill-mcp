@@ -5,7 +5,7 @@ MCP server (stdio) for SplitBill: create bills from agent-split receipts, list/f
 ## Prereqs
 
 - Node 20+
-- Running SplitBill (`SPLITBILL_BASE_URL`, default `http://localhost:3000`)
+- Running SplitBill — `SPLITBILL_BASE_URL` must be set (e.g. `http://localhost:3000`)
 - Service user registered via SplitBill `/auth/register`
 
 ## Setup

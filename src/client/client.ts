@@ -2,9 +2,6 @@ import type { SplitBillConfig } from "../config.js";
 import type { BillDto, ParticipantStatus, PopulatedUser } from "../types.js";
 import { ApiError, AuthError, ResolveError } from "./errors.js";
 
-const isRecord = (v: unknown): v is Record<string, unknown> =>
-  typeof v === "object" && v !== null;
-
 export class SplitBillClient {
   private cookie: string | null = null;
   private meId: string | null = null;
@@ -135,7 +132,7 @@ export class SplitBillClient {
       return res.bill;
     } catch (err) {
       if (err instanceof ApiError && err.status === 404) {
-        throw new ApiError(404, "Bill not found");
+        throw new ApiError(404, `Bill not found: ${err.upstream}`);
       }
       throw err;
     }
@@ -193,8 +190,9 @@ export class SplitBillClient {
   }
 
   async resolveUserId(ref: string): Promise<string> {
-    if (/^[0-9a-fA-F]{24}$/.test(ref)) return ref;
-    const norm = ref.trim().toLowerCase();
+    const trimmed = ref.trim();
+    if (/^[0-9a-fA-F]{24}$/.test(trimmed)) return trimmed;
+    const norm = trimmed.toLowerCase();
     // Upstream user search excludes the caller, so the service user's own
     // email is never searchable — resolve it directly via /api/user/me.
     if (norm === this.cfg.SPLITBILL_EMAIL.toLowerCase()) {
@@ -204,7 +202,7 @@ export class SplitBillClient {
     }
     const cached = this.emailCache.get(norm);
     if (cached) return cached;
-    const found = await this.searchUsers(ref);
+    const found = await this.searchUsers(trimmed);
     const exact = found.find((u) => u.email.toLowerCase() === norm);
     if (exact) {
       this.emailCache.set(norm, exact._id);
@@ -224,19 +222,11 @@ export class SplitBillClient {
     );
   }
 
-  protected invalidateMe(): void {
-    this.meId = null;
-  }
-
   protected get cachedMeId(): string | null {
     return this.meId;
   }
 
   protected set cachedMeId(id: string | null) {
     this.meId = id;
-  }
-
-  protected get isRecordHelper(): typeof isRecord {
-    return isRecord;
   }
 }

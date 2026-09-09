@@ -31,7 +31,7 @@ export function aggregateBillStatus(
   return "partial";
 }
 
-export function filterBills(bills: BillLike[], selfId: string, f: BillFilter): BillLike[] {
+export function filterBills<T extends BillLike>(bills: T[], selfId: string, f: BillFilter): T[] {
   return bills.filter((b) => {
     if (f.status && f.status !== "all" && aggregateBillStatus(b.participants) !== f.status) {
       return false;

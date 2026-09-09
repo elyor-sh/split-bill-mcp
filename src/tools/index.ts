@@ -172,7 +172,7 @@ export function buildTools(client: SplitBillClient): ToolDef[] {
           search: input.search,
           dateFrom: input.date_from,
           dateTo: input.date_to,
-        }) as BillDto[];
+        });
         const groups = groupByStatus(filtered);
         const page = paginate(filtered, input.page, input.limit);
         return {
