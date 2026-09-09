@@ -50,25 +50,35 @@ Missing/invalid vars fail fast at startup with
 
 ## Connect a client
 
+Build first (`npm run build`), then pick your client.
 Replace `<path-to-split-bill-mcp>` with the directory where you cloned this repo.
-Secrets can live in the MCP client config `env` (below) or in a `.env` file —
-`env` in the client config takes precedence.
+Secrets can live in the client config or in a `.env` file next to `dist/`.
 
-**Claude Code** (`~/.claude.json` or project `.mcp.json`):
+**Claude Code** — one command (writes to `~/.claude.json`):
 
-```json
-{ "mcpServers": { "split-bill": {
-  "command": "node",
-  "args": ["<path-to-split-bill-mcp>/dist/index.js"],
-  "env": {
-    "SPLITBILL_BASE_URL": "http://localhost:3000",
-    "SPLITBILL_EMAIL": "agent@example.com",
-    "SPLITBILL_PASSWORD": "change-me"
-  }
-} } }
+```bash
+claude mcp add \
+  --env SPLITBILL_BASE_URL=http://localhost:3000 \
+  --env SPLITBILL_EMAIL=agent@example.com \
+  --env SPLITBILL_PASSWORD=change-me \
+  --transport stdio split-bill --scope user \
+  -- node <path-to-split-bill-mcp>/dist/index.js
 ```
 
-**Codex** (`~/.codex/config.toml`):
+Check with `claude mcp list`. Or share with the team via `.mcp.json`
+(`--scope project` instead of `--scope user`).
+
+**Codex** — one command (writes to `~/.codex/config.toml`):
+
+```bash
+codex mcp add split-bill \
+  --env SPLITBILL_BASE_URL=http://localhost:3000 \
+  --env SPLITBILL_EMAIL=agent@example.com \
+  --env SPLITBILL_PASSWORD=change-me \
+  -- node <path-to-split-bill-mcp>/dist/index.js
+```
+
+Check with `codex mcp list`. Or edit `~/.codex/config.toml` by hand:
 
 ```toml
 [mcp_servers.split-bill]
@@ -81,8 +91,48 @@ SPLITBILL_EMAIL = "agent@example.com"
 SPLITBILL_PASSWORD = "change-me"
 ```
 
-Any other MCP client: run `node <path-to-split-bill-mcp>/dist/index.js`
-over stdio with the env vars above set.
+**OpenCode** — no install command exists, copy this into
+`opencode.json` / `opencode.jsonc` (global `~/.config/opencode/` or project root):
+
+```json
+{ "$schema": "https://opencode.ai/config.json",
+  "mcp": { "split-bill": {
+    "type": "local",
+    "command": ["node", "<path-to-split-bill-mcp>/dist/index.js"],
+    "environment": {
+      "SPLITBILL_BASE_URL": "http://localhost:3000",
+      "SPLITBILL_EMAIL": "agent@example.com",
+      "SPLITBILL_PASSWORD": "change-me"
+    }
+  } } }
+```
+
+**Pi** — `pi install` only installs Pi *extensions*, not MCP servers,
+so a one-liner for our server alone is impossible.
+Two steps instead: install an MCP client extension, then add the server
+to its config:
+
+```bash
+pi install npm:pi-mcp-extension
+```
+
+`~/.pi/agent/mcp.json` (global) or `.pi/mcp.json` (project):
+
+```json
+{ "mcpServers": { "split-bill": {
+  "command": "node",
+  "args": ["<path-to-split-bill-mcp>/dist/index.js"],
+  "transport": "stdio",
+  "lifecycle": "eager",
+  "env": {
+    "SPLITBILL_BASE_URL": "http://localhost:3000",
+    "SPLITBILL_EMAIL": "agent@example.com",
+    "SPLITBILL_PASSWORD": "change-me"
+  }
+} } }
+```
+
+Check with `/mcp` inside Pi.
 
 ## Tools
 
