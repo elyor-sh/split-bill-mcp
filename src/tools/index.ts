@@ -62,52 +62,60 @@ export function buildTools(client: SplitBillClient): ToolDef[] {
     {
       name: "create_bill",
       description:
-        "Create a SplitBill bill. mode=ready_split takes pre-split participants with totals; mode=raw_receipt takes receipt positions with consumers and splits them.",
+        "Create a SplitBill bill. mode=ready_split takes pre-split participants with totals; mode=raw_receipt takes receipt positions with consumers and splits them. Pass real arrays/numbers (not JSON strings). raw_receipt example: {mode:'raw_receipt',receipt_items:[{name:'Plov',price:20000,consumers:['a@x']}],payer:'a@x',title:'SamOsh'}.",
+      // Flat schema on purpose: oneOf/anyOf makes many LLM bridges stringify
+      // nested arrays (participants/receipt_items/consumers) which then fails
+      // zod with "Expected array, received string". Zod still enforces
+      // per-mode required fields; this JSON Schema is only the LLM hint.
       inputSchema: {
         type: "object",
-        oneOf: [
-          obj(
-            {
-              mode: { const: "ready_split" },
-              participants: arr(
-                obj({
-                  user: str({ description: "email or userId" }),
-                  items: arr(obj({ name: str(), price: num(), priceWithVat: opt(num()), vat: opt(bool()) })),
-                  totalSum: num(),
-                }),
+        properties: {
+          mode: {
+            type: "string",
+            enum: ["ready_split", "raw_receipt"],
+            description: "ready_split = you already split totals; raw_receipt = server splits receipt positions",
+          },
+          participants: arr(
+            obj({
+              user: str({ description: "email or userId" }),
+              items: arr(
+                obj({ name: str(), price: num(), priceWithVat: opt(num()), vat: opt(bool()) }),
                 { minItems: 1 },
               ),
-              payerId: str(),
-              title: opt(str()),
-              description: opt(str()),
-              lang: opt(str()),
-            },
-            ["mode", "participants", "payerId"],
+              totalSum: num(),
+            }),
+            { minItems: 1, description: "Required when mode=ready_split" },
           ),
-          obj(
-            {
-              mode: { const: "raw_receipt" },
-              receipt_items: arr(
-                obj({
-                  name: str(),
-                  price: num(),
-                  priceWithVat: opt(num()),
-                  vat: opt(bool()),
-                  consumers: arr(str(), { minItems: 1 }),
-                  portions: opt(arr(num())),
-                }),
-                { minItems: 1 },
-              ),
-              payer: str({ description: "email or userId" }),
-              title: opt(str()),
-              description: opt(str()),
-              lang: opt(str()),
-            },
-            ["mode", "receipt_items", "payer"],
+          payerId: str({ description: "email or userId. Required when mode=ready_split (payer also accepted as alias)" }),
+          receipt_items: arr(
+            obj({
+              name: str(),
+              price: num(),
+              priceWithVat: opt(num()),
+              vat: opt(bool()),
+              consumers: arr(str(), { minItems: 1, description: "emails or userIds sharing this position" }),
+              portions: opt(arr(num(), { description: "weights, same length as consumers" })),
+            }),
+            { minItems: 1, description: "Required when mode=raw_receipt" },
           ),
-        ],
+          payer: str({ description: "email or userId. Required when mode=raw_receipt (payerId also accepted as alias)" }),
+          title: opt(str()),
+          description: opt(str()),
+          lang: opt(str({ description: "'en' default, 'ru' for Russian summary" })),
+        },
+        required: ["mode"],
       },
-      handler: async (args) => {
+      handler: async (rawArgs) => {
+        const args =
+          typeof rawArgs === "string"
+            ? (() => {
+                try {
+                  return JSON.parse(rawArgs);
+                } catch {
+                  return rawArgs;
+                }
+              })()
+            : rawArgs;
         const input = createBillInputSchema.parse(args);
         const lang = input.lang;
         if (input.mode === "raw_receipt") {

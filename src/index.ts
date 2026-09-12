@@ -37,7 +37,16 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
     return { content: [{ type: "text", text: `Unknown tool '${req.params.name}'` }], isError: true };
   }
   try {
-    const result = await tool.handler(req.params.arguments ?? {});
+    let toolArgs: unknown = req.params.arguments ?? {};
+    // Some bridges deliver the whole arguments object as a JSON string.
+    if (typeof toolArgs === "string") {
+      try {
+        toolArgs = JSON.parse(toolArgs);
+      } catch {
+        // leave as-is, zod will report a clear VALIDATION_ERROR
+      }
+    }
+    const result = await tool.handler(toolArgs);
     return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);

@@ -62,6 +62,56 @@ describe("zod schemas accept representative payloads", () => {
     expect(() => listBillsInputSchema.parse({ date_from: "garbage" })).toThrow(/parseable date/);
     expect(() => listBillsInputSchema.parse({ date_from: "2026-09-01" })).not.toThrow();
   });
+  it("create_bill tolerates JSON-string arrays from LLM bridges", () => {
+    // The reported bug: "Expected array, received string" when the agent
+    // sends participants/receipt_items as a JSON-encoded string.
+    const out = createBillInputSchema.parse({
+      mode: "raw_receipt",
+      receipt_items: '[{"name":"Плов","price":20000,"consumers":["a@x"]}]',
+      payer: "a@x",
+      title: "СамОш",
+    }) as { mode: string; receipt_items: { price: number }[] };
+    expect(out.mode).toBe("raw_receipt");
+    expect(out.receipt_items[0].price).toBe(20000);
+  });
+  it("create_bill tolerates numeric strings and single-consumer strings", () => {
+    const out = createBillInputSchema.parse({
+      mode: "raw_receipt",
+      receipt_items: [{ name: "Плов", price: "20000", consumers: "a@x" }],
+      payer: "a@x",
+    }) as { receipt_items: { price: number; consumers: string[] }[] };
+    expect(out.receipt_items[0].price).toBe(20000);
+    expect(out.receipt_items[0].consumers).toEqual(["a@x"]);
+  });
+  it("create_bill tolerates stringified participants and payer alias", () => {
+    const out = createBillInputSchema.parse({
+      mode: "raw_receipt",
+      receipt_items: [{ name: "X", price: 100, consumers: ["a@x"] }],
+      payerId: "a@x",
+    }) as { payer: string };
+    expect(out.payer).toBe("a@x");
+  });
+  it("create_bill still rejects real validation errors", () => {
+    expect(() =>
+      createBillInputSchema.parse({ mode: "raw_receipt", receipt_items: [], payer: "a@x" }),
+    ).toThrow();
+    expect(() =>
+      createBillInputSchema.parse({
+        mode: "raw_receipt",
+        receipt_items: [{ name: "X", price: -5, consumers: ["a@x"] }],
+        payer: "a@x",
+      }),
+    ).toThrow();
+  });
+  it("list_bills/friends coerce numeric/boolean strings", () => {
+    expect(listBillsInputSchema.parse({ page: "2", limit: "10" }).page).toBe(2);
+    expect(listFriendsInputSchema.parse({ include_requests: "true" }).include_requests).toBe(true);
+  });
+  it("create_bill inputSchema is flat (no oneOf) for LLM compatibility", () => {
+    const t = buildTools(fakeClient).find((x) => x.name === "create_bill")!;
+    expect("oneOf" in (t.inputSchema as Record<string, unknown>)).toBe(false);
+    expect((t.inputSchema as { required?: string[] }).required).toContain("mode");
+  });
 });
 
 describe("handlers with mock client", () => {
